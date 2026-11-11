@@ -1817,7 +1817,8 @@ namespace MouseWithoutBorders.Class
                 using (FileStream f = File.OpenRead(fileName))
                 {
                     byte[] buf = new byte[Common.NETWORK_STREAM_BUF_SIZE];
-                    int rv, sentCount = 0;
+                    int rv;
+                    long sentCount = 0;
 
                     do
                     {
@@ -1829,10 +1830,11 @@ namespace MouseWithoutBorders.Class
                     }
                     while (rv > 0);
 
-                    if ((rv = Package.PACKAGE_SIZE - (sentCount % Package.PACKAGE_SIZE)) > 0)
+                    int padding = Package.PACKAGE_SIZE - (int)(sentCount % Package.PACKAGE_SIZE);
+                    if (padding > 0)
                     {
                         Array.Clear(buf, 0, buf.Length);
-                        ecStream.Write(buf, 0, rv);
+                        ecStream.Write(buf, 0, padding);
                     }
 
                     ecStream.Flush();
