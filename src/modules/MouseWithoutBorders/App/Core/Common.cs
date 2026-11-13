@@ -1178,6 +1178,36 @@ internal static class Common
         return null;
     }
 
+    // Do not start another connection while an existing client socket is resolving,
+    // connecting or completing the trust handshake. Keep IsConnectedByAClientSocketTo
+    // unchanged: other callers need a fully trusted connection.
+    internal static bool IsActiveClientSocketStatus(SocketStatus status)
+    {
+        return status is SocketStatus.Resolving or SocketStatus.Connecting or SocketStatus.Handshaking or SocketStatus.Connected;
+    }
+
+    internal static bool HasActiveClientSocketTo(string machineName)
+    {
+        SocketStuff sk = Sk;
+        if (sk != null)
+        {
+            lock (sk.TcpSocketsLock)
+            {
+                foreach (TcpSk tcp in sk.TcpSockets)
+                {
+                    if (tcp != null && tcp.IsClient && tcp.BackingSocket != null
+                        && tcp.MachineName.Equals(machineName, StringComparison.OrdinalIgnoreCase)
+                        && IsActiveClientSocketStatus(tcp.Status))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
     internal static bool IsConnectingByAClientSocketTo(string machineName, IPAddress ip)
     {
         SocketStuff sk = Common.Sk;
@@ -1188,9 +1218,9 @@ internal static class Common
             {
                 foreach (TcpSk t in sk.TcpSockets)
                 {
-                    if (t != null && t.IsClient && t.Status == SocketStatus.Connecting
+                    if (t != null && t.IsClient && (t.Status is SocketStatus.Connecting or SocketStatus.Handshaking)
                         && t.BackingSocket != null && t.MachineName.Equals(machineName, StringComparison.OrdinalIgnoreCase)
-                        && t.Address.ToString().Equals(ip.ToString(), StringComparison.OrdinalIgnoreCase))
+                        && t.Address != null && t.Address.Equals(ip))
                     {
                         return true;
                     }

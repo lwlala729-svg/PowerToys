@@ -801,6 +801,10 @@ namespace MouseWithoutBorders.Class
                 return;
             }
 
+            // A failed handshake must not block future retries forever. The existing
+            // cleanup removes sockets whose non-connected state exceeded CONNECT_TIMEOUT.
+            Common.CloseAnUnusedSocket();
+
             Logger.LogDebug("!!!!! UpdateTCPClients !!!!!");
 
             try
@@ -817,11 +821,11 @@ namespace MouseWithoutBorders.Class
                         {
                             bool found = false;
 
-                            found = Common.IsConnectedByAClientSocketTo(machineName);
+                            found = Common.HasActiveClientSocketTo(machineName);
 
                             if (found)
                             {
-                                Logger.LogDebug(machineName + " is already connected! ^^^^^^^^^^^^^^^^^^^^^");
+                                Logger.LogDebug(machineName + " already has an active client connection or handshake.");
                                 continue;
                             }
 
@@ -903,8 +907,7 @@ namespace MouseWithoutBorders.Class
 
                 if (!string.IsNullOrEmpty(Setting.Values.Name2IP))
                 {
-                    string combinedName2ipList = Setting.Values.Name2IpPolicyList + Separator + Setting.Values.Name2IP;
-                    string[] name2ip = combinedName2ipList.Split(Separator, StringSplitOptions.RemoveEmptyEntries);
+                    string[] name2ip = GetName2IpMappingLines(Setting.Values.Name2IpPolicyList, Setting.Values.Name2IP);
                     string[] nameNip;
 
                     if (name2ip != null)
@@ -1141,19 +1144,27 @@ namespace MouseWithoutBorders.Class
                     tcpClient = new TcpClient(AddressFamily.InterNetworkV6);
                     tcpClient.Client.DualMode = true;
 
-                    if (Common.IsConnectedByAClientSocketTo(machineName))
+                    TcpSk tcp;
+                    // The check and socket registration must be atomic: two concurrent
+                    // connection workers can otherwise both pass their duplicate guards.
+                    lock (TcpSocketsLock)
                     {
-                        Logger.LogDebug(machineName + " is already connected by another client socket.");
-                        return;
-                    }
+                        if (Common.IsConnectedByAClientSocketTo(machineName))
+                        {
+                            Logger.LogDebug(machineName + " is already connected by another client socket.");
+                            tcpClient.Dispose();
+                            return;
+                        }
 
-                    if (Common.IsConnectingByAClientSocketTo(machineName, ip))
-                    {
-                        Logger.LogDebug($"{machineName}:{ip} is already being connected by another client socket.");
-                        return;
-                    }
+                        if (Common.IsConnectingByAClientSocketTo(machineName, ip))
+                        {
+                            Logger.LogDebug($"{machineName}:{ip} is already connecting or handshaking.");
+                            tcpClient.Dispose();
+                            return;
+                        }
 
-                    TcpSk tcp = AddTcpSocket(true, tcpClient.Client, SocketStatus.Connecting, machineName, ip);
+                        tcp = AddTcpSocket(true, tcpClient.Client, SocketStatus.Connecting, machineName, ip);
+                    }
 
                     // Update the other server socket's machine name based on this corresponding client socket.
                     UpdateTcpSockets(tcp, SocketStatus.Connecting);
@@ -1257,6 +1268,14 @@ namespace MouseWithoutBorders.Class
         private long lastRemoteMachineID;
         internal static readonly string[] Separator = new string[] { "\r\n" };
         internal static readonly char[] BlankSeparator = new char[] { ' ' };
+
+        // Backported from the newer PowerToys implementation: concatenating a
+        // string[] here produces the literal "System.String[]", not a separator.
+        internal static string[] GetName2IpMappingLines(string policyMappings, string userMappings)
+        {
+            string combinedMappings = policyMappings + Separator[0] + userMappings;
+            return combinedMappings.Split(Separator, StringSplitOptions.RemoveEmptyEntries);
+        }
 
         private void MainTCPRoutine(TcpSk tcp, string machineName, bool isClient)
         {
@@ -1817,7 +1836,8 @@ namespace MouseWithoutBorders.Class
                 using (FileStream f = File.OpenRead(fileName))
                 {
                     byte[] buf = new byte[Common.NETWORK_STREAM_BUF_SIZE];
-                    int rv, sentCount = 0;
+                    int rv;
+                    long sentCount = 0;
 
                     do
                     {
@@ -1829,10 +1849,11 @@ namespace MouseWithoutBorders.Class
                     }
                     while (rv > 0);
 
-                    if ((rv = Package.PACKAGE_SIZE - (sentCount % Package.PACKAGE_SIZE)) > 0)
+                    int padding = Package.PACKAGE_SIZE - (int)(sentCount % Package.PACKAGE_SIZE);
+                    if (padding > 0)
                     {
                         Array.Clear(buf, 0, buf.Length);
-                        ecStream.Write(buf, 0, rv);
+                        ecStream.Write(buf, 0, padding);
                     }
 
                     ecStream.Flush();

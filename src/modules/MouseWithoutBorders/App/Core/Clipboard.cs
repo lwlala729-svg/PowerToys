@@ -41,7 +41,6 @@ internal static class Clipboard
 
     internal const uint BIG_CLIPBOARD_DATA_TIMEOUT = 30000;
     private const uint MAX_CLIPBOARD_DATA_SIZE_CAN_BE_SENT_INSTANTLY_TCP = 1024 * 1024; // 1MB
-    private const uint MAX_CLIPBOARD_FILE_SIZE_CAN_BE_SENT = 100 * 1024 * 1024; // 100MB
     private const int TEXT_HEADER_SIZE = 12;
     private const int DATA_SIZE = 48;
     private const string TEXT_TYPE_SEP = "{4CFF57F7-BEDD-43d5-AE8F-27A61E886F2F}";
@@ -154,7 +153,7 @@ internal static class Clipboard
                     {
                         if (File.Exists(filePath) || Directory.Exists(filePath))
                         {
-                            if (File.Exists(filePath) && new FileInfo(filePath).Length <= MAX_CLIPBOARD_FILE_SIZE_CAN_BE_SENT)
+                            if (File.Exists(filePath))
                             {
                                 Logger.LogDebug("Clipboard contains: " + filePath);
                                 LastDragDropFile = filePath;
